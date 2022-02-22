@@ -7,7 +7,10 @@ use my_azure_storage_sdk::{
 };
 use tokio::sync::Mutex;
 
-use crate::{page_blob_cached_data::PageBlobCachedData, pages_cache::PageFromCacheResult};
+use crate::{
+    exact_payload::ExactPayloadPositions, page_blob_cached_data::PageBlobCachedData,
+    pages_cache::PageFromCacheResult, ExactPayload,
+};
 
 pub struct MyAzurePageBlobAdvanced<TAzurePageBlobStorage: AzurePageBlobStorage> {
     page_blob: TAzurePageBlobStorage,
@@ -42,23 +45,43 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
         self.page_blob.get_container_name()
     }
 
-    pub async fn resize(&self, pages_amount: usize) -> Result<(), AzureStorageError> {
-        let mut write_access = self.cache.lock().await;
+    async fn get_pages_amount(
+        &self,
+        cache: &mut PageBlobCachedData,
+    ) -> Result<usize, AzureStorageError> {
+        if let Some(size) = cache.get_pages_amount() {
+            return Ok(size);
+        }
+
+        let props = self.execute_get_blob_properties(cache).await?;
+
+        return Ok(props.blob_size / BLOB_PAGE_SIZE);
+    }
+
+    async fn execute_resize(
+        &self,
+        pages_amount: usize,
+        cache: &mut PageBlobCachedData,
+    ) -> Result<(), AzureStorageError> {
         let mut attempt_no = 0;
 
         loop {
             match self.page_blob.resize(pages_amount).await {
                 Ok(result) => {
-                    write_access.set_pages_amount(pages_amount);
+                    cache.set_pages_amount(pages_amount);
                     return Ok(result);
                 }
                 Err(err) => {
                     attempt_no += 1;
-                    self.handle_error(err, attempt_no, &mut write_access)
-                        .await?;
+                    self.handle_error(err, attempt_no, cache).await?;
                 }
             }
         }
+    }
+
+    pub async fn resize(&self, pages_amount: usize) -> Result<(), AzureStorageError> {
+        let mut write_access = self.cache.lock().await;
+        self.execute_resize(pages_amount, &mut write_access).await
     }
 
     pub async fn create_container_if_not_exist(&self) -> Result<(), AzureStorageError> {
@@ -82,25 +105,7 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
 
     pub async fn get_available_pages_amount(&self) -> Result<usize, AzureStorageError> {
         let mut cache = self.cache.lock().await;
-
-        if let Some(result) = cache.get_pages_amount() {
-            return Ok(result);
-        }
-
-        let mut attempt_no = 0;
-
-        loop {
-            match self.page_blob.get_available_pages_amount().await {
-                Ok(result) => {
-                    cache.set_pages_amount(result);
-                    return Ok(result);
-                }
-                Err(err) => {
-                    attempt_no += 1;
-                    self.handle_error(err, attempt_no, &mut cache).await?;
-                }
-            }
-        }
+        return self.get_pages_amount(&mut cache).await;
     }
 
     pub async fn create(&self, pages_amount: usize) -> Result<(), AzureStorageError> {
@@ -150,18 +155,28 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
         pages_amount: usize,
     ) -> Result<Vec<u8>, AzureStorageError> {
         let mut cache = self.cache.lock().await;
+        self.execute_get(start_page_no, pages_amount, &mut cache)
+            .await
+    }
 
+    async fn execute_get(
+        &self,
+        start_page_no: usize,
+        pages_amount: usize,
+        cache: &mut PageBlobCachedData,
+    ) -> Result<Vec<u8>, AzureStorageError> {
         if cache.cached_pages.is_some() {
             return self
-                .get_using_cache(start_page_no, pages_amount, &mut cache)
+                .execute_get_using_cache(start_page_no, pages_amount, cache)
                 .await;
         } else {
             return self
-                .get_not_using_cache(start_page_no, pages_amount, &mut cache)
+                .execute_get_not_using_cache(start_page_no, pages_amount, cache)
                 .await;
         }
     }
-    async fn get_not_using_cache(
+
+    async fn execute_get_not_using_cache(
         &self,
         start_page_no: usize,
         pages_amount: usize,
@@ -185,7 +200,7 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
         }
     }
 
-    async fn get_using_cache(
+    async fn execute_get_using_cache(
         &self,
         start_page_no: usize,
         pages_amount: usize,
@@ -197,7 +212,11 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
             .unwrap()
             .get(start_page_no, pages_amount);
 
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(pages_amount * BLOB_PAGE_SIZE);
+        unsafe {
+            result.set_len(result.capacity());
+        }
+
         let mut result_offset = 0;
 
         for interval in data_from_cache {
@@ -205,7 +224,11 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
                 PageFromCacheResult::MissingInterval(interval) => {
                     let interval_size = interval.pages_amount * BLOB_PAGE_SIZE;
                     let chunk = self
-                        .get_not_using_cache(interval.start_page_no, interval.pages_amount, cache)
+                        .execute_get_not_using_cache(
+                            interval.start_page_no,
+                            interval.pages_amount,
+                            cache,
+                        )
                         .await?;
 
                     let slice_to_copy = &mut result[result_offset..result_offset + interval_size];
@@ -244,17 +267,29 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
     ) -> Result<(), AzureStorageError> {
         let mut cache = self.cache.lock().await;
 
+        self.execute_save_pages(start_page_no, payload, &mut cache)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn execute_save_pages(
+        &self,
+        start_page_no: usize,
+        payload: Vec<u8>,
+        cache: &mut PageBlobCachedData,
+    ) -> Result<(), AzureStorageError> {
         let pages_to_write = payload.len() / BLOB_PAGE_SIZE;
 
         if pages_to_write <= self.pages_to_save_per_roundtrip {
-            self.save_pages_as_one_shot(start_page_no, payload.to_vec(), &mut cache)
+            self.save_pages_as_one_shot(start_page_no, payload.to_vec(), cache)
                 .await?
         } else {
             self.save_pages_per_several_shots(
                 start_page_no,
                 payload.to_vec(),
                 pages_to_write,
-                &mut cache,
+                cache,
             )
             .await?
         };
@@ -265,7 +300,6 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
 
         Ok(())
     }
-
     async fn save_pages_as_one_shot(
         &self,
         start_page_no: usize,
@@ -381,10 +415,11 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
         }
     }
 
-    pub async fn get_blob_properties(&self) -> Result<BlobProperties, AzureStorageError> {
+    async fn execute_get_blob_properties(
+        &self,
+        cache: &mut PageBlobCachedData,
+    ) -> Result<BlobProperties, AzureStorageError> {
         let mut attempt_no = 0;
-
-        let mut cache = self.cache.lock().await;
 
         loop {
             match self.page_blob.get_blob_properties().await {
@@ -394,10 +429,106 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
                 }
                 Err(err) => {
                     attempt_no += 1;
-                    self.handle_error(err, attempt_no, &mut cache).await?;
+                    self.handle_error(err, attempt_no, cache).await?;
                 }
             }
         }
+    }
+
+    pub async fn get_blob_properties(&self) -> Result<BlobProperties, AzureStorageError> {
+        let mut cache = self.cache.lock().await;
+        self.execute_get_blob_properties(&mut cache).await
+    }
+
+    pub async fn get_payload(
+        &self,
+        start_pos: usize,
+        read_size: usize,
+    ) -> Result<ExactPayload, AzureStorageError> {
+        let positions = ExactPayloadPositions::new(start_pos, read_size, BLOB_PAGE_SIZE);
+
+        let mut write_access = self.cache.lock().await;
+
+        let blob_size = self.get_pages_amount(&mut write_access).await? * BLOB_PAGE_SIZE;
+
+        if blob_size < positions.end_pos {
+            return Err(AzureStorageError::UnknownError {
+                msg: format!(
+                    "Range is violated. BlobSize: {}. StartPos:{}, ReadSize:{}",
+                    blob_size, start_pos, read_size
+                ),
+            });
+        }
+
+        let positions = ExactPayloadPositions::new(start_pos, read_size, BLOB_PAGE_SIZE);
+
+        let payload = self
+            .execute_get(
+                positions.start_page_no,
+                positions.get_full_pages_amount(),
+                &mut write_access,
+            )
+            .await?;
+
+        let result = ExactPayload {
+            payload,
+            offset: positions.get_payload_offset(),
+            size: read_size,
+        };
+
+        Ok(result)
+    }
+
+    pub async fn save_payload(
+        &self,
+        start_pos: usize,
+        payload: &[u8],
+        auto_ressize_rate: Option<usize>,
+    ) -> Result<(), AzureStorageError> {
+        let positions = ExactPayloadPositions::new(start_pos, payload.len(), BLOB_PAGE_SIZE);
+
+        let mut cache = self.cache.lock().await;
+
+        let blob_size = self.get_pages_amount(&mut cache).await?;
+
+        if blob_size < positions.end_pos {
+            if let Some(auto_ressize_rate) = auto_ressize_rate {
+                let pages_to_ressize = crate::utils::calc_pages_amount_to_ressize(
+                    positions.end_pos,
+                    BLOB_PAGE_SIZE,
+                    auto_ressize_rate,
+                );
+
+                self.execute_resize(pages_to_ressize, &mut cache).await?;
+            } else {
+                return Err(AzureStorageError::UnknownError {
+                    msg: format!(
+                        "Range is violated. BlobSize: {}. StartPos:{}, WriteSize:{}",
+                        blob_size,
+                        start_pos,
+                        payload.len()
+                    ),
+                });
+            }
+        }
+
+        let mut blob_payload = self
+            .execute_get(
+                positions.start_page_no,
+                positions.get_full_pages_amount(),
+                &mut cache,
+            )
+            .await?;
+
+        let dest = &mut blob_payload
+            [positions.get_payload_offset()..positions.get_payload_offset() + payload.len()];
+
+        dest.copy_from_slice(payload);
+
+        self.execute_save_pages(positions.start_page_no, blob_payload, &mut cache)
+            .await?;
+
+        Ok(())
     }
 
     async fn handle_error(
@@ -427,5 +558,44 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use my_azure_storage_sdk::page_blob::AzurePageBlobMock;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_exact_amount() {
+        let page_blob_mock = AzurePageBlobMock::new();
+
+        page_blob_mock
+            .create_container_if_not_exist()
+            .await
+            .unwrap();
+
+        page_blob_mock.create(0).await.unwrap();
+
+        let page_blob =
+            MyAzurePageBlobAdvanced::new(page_blob_mock, 3, Duration::from_secs(3), 10, 10);
+
+        page_blob
+            .save_payload(3, vec![3u8, 4u8, 5u8, 6u8].as_slice(), Some(1))
+            .await
+            .unwrap();
+
+        let result = page_blob.download().await.unwrap();
+
+        assert_eq!(
+            [0u8, 0u8, 0u8, 3u8, 4u8, 5u8, 6u8, 0u8].as_slice(),
+            &result[..8]
+        );
+
+        let read_result = page_blob.get_payload(4, 3).await.unwrap();
+
+        assert_eq!([4u8, 5u8, 6u8].as_slice(), read_result.as_slice());
     }
 }
