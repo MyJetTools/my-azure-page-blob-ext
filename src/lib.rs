@@ -5,3 +5,4 @@ mod pages_cache;
 pub use exact_payload::ExactPayload;
 pub use my_azure_page_blob_advanced::MyAzurePageBlobAdvanced;
 pub mod utils;
+pub mod with_retries;
