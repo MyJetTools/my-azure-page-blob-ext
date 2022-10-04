@@ -1,6 +1,6 @@
 use my_azure_storage_sdk::{page_blob::AzurePageBlobStorage, AzureStorageError};
 
-pub async fn handle_read_error(
+pub async fn handle_error(
     page_blob: &AzurePageBlobStorage,
     err: AzureStorageError,
     create_container_if_not_exist: bool,

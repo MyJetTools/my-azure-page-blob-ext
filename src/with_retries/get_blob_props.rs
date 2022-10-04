@@ -15,7 +15,7 @@ pub async fn get_blob_props(
                 return Ok(props);
             }
             Err(err) => {
-                super::handle_read_error(
+                super::handle_error(
                     page_blob,
                     err,
                     auto_create_container,
