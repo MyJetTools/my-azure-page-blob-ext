@@ -1,5 +1,5 @@
 [package]
-name = "my-azure-page-blob-advanced"
+name = "my-azure-page-blob-ext"
 version = "0.1.0"
 authors = ["Andrey <amigin@gmail.com>"]
 edition = "2021"
