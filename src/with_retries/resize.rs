@@ -1,6 +1,6 @@
 use my_azure_storage_sdk::{page_blob::AzurePageBlobStorage, AzureStorageError};
 
-pub async fn set_pages_amount(
+pub async fn resize(
     page_blob: &AzurePageBlobStorage,
     crate_container_if_not_exists: bool,
     create_blob_if_not_exists: bool,
