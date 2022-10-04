@@ -12,17 +12,17 @@ use crate::{
     pages_cache::PageFromCacheResult, ExactPayload,
 };
 
-pub struct MyAzurePageBlobAdvanced<TAzurePageBlobStorage: AzurePageBlobStorage> {
-    page_blob: TAzurePageBlobStorage,
+pub struct MyAzurePageBlobAdvanced {
+    page_blob: AzurePageBlobStorage,
     retries_attempts_amount: usize,
     delay_between_attempts: Duration,
     pages_to_save_per_roundtrip: usize,
     cache: Mutex<PageBlobCachedData>,
 }
 
-impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzurePageBlobStorage> {
+impl MyAzurePageBlobAdvanced {
     pub fn new(
-        page_blob: TAzurePageBlobStorage,
+        page_blob: AzurePageBlobStorage,
         retries_attempts_amount: usize,
         delay_between_attempts: Duration,
         pages_to_save_per_roundtrip: usize,
@@ -546,12 +546,17 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
             AzureStorageError::InvalidPageRange => Err(err),
             AzureStorageError::RequestBodyTooLarge => Err(err),
             AzureStorageError::UnknownError { msg } => Err(AzureStorageError::UnknownError { msg }),
-            AzureStorageError::HyperError { err } => {
+            AzureStorageError::InvalidResourceName => Err(AzureStorageError::InvalidResourceName),
+            AzureStorageError::IoError(err) => Err(AzureStorageError::IoError(err)),
+
+            AzureStorageError::Timeout => todo!(),
+
+            AzureStorageError::HyperError(err) => {
                 println!("Hyper error. Attempt: {}. Err:{}", attempt_no, err);
 
                 if attempt_no >= self.retries_attempts_amount {
                     cache.reset_cache();
-                    Err(AzureStorageError::HyperError { err })
+                    Err(AzureStorageError::HyperError(err))
                 } else {
                     tokio::time::sleep(self.delay_between_attempts).await;
                     Ok(())
@@ -564,13 +569,18 @@ impl<TAzurePageBlobStorage: AzurePageBlobStorage> MyAzurePageBlobAdvanced<TAzure
 #[cfg(test)]
 mod test {
 
-    use my_azure_storage_sdk::page_blob::AzurePageBlobMock;
+    use std::sync::Arc;
+
+    use my_azure_storage_sdk::AzureStorageConnection;
 
     use super::*;
 
     #[tokio::test]
     async fn test_exact_amount() {
-        let page_blob_mock = AzurePageBlobMock::new();
+        let connection = AzureStorageConnection::new_in_memory();
+        let page_blob_mock =
+            AzurePageBlobStorage::new(Arc::new(connection), "test".to_string(), "test".to_string())
+                .await;
 
         page_blob_mock
             .create_container_if_not_exist()
