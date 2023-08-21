@@ -27,33 +27,6 @@ impl MyAzurePageBlobStorageWithRetries {
             retry_delay,
         }
     }
-
-    pub async fn get_blob_properties_or_create_blob(
-        &self,
-        init_pages_amount: usize,
-    ) -> Result<PageBlobProperties, AzureStorageError> {
-        let mut attempt_no = 0;
-
-        loop {
-            match self
-                .page_blob
-                .get_blob_properties_or_create_blob(init_pages_amount)
-                .await
-            {
-                Ok(result) => {
-                    return Ok(result.into());
-                }
-                Err(err) => {
-                    if attempt_no >= self.retries_amount {
-                        return Err(err);
-                    }
-                    attempt_no += 1;
-
-                    tokio::time::sleep(self.retry_delay).await;
-                }
-            }
-        }
-    }
 }
 
 #[async_trait::async_trait]
