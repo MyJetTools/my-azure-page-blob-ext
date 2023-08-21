@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use my_azure_storage_sdk::{
-    page_blob::{AzurePageBlobStorage, MyAzurePageBlobStorage, PageBlobProperties},
+    blob::BlobProperties,
+    page_blob::{
+        consts::BLOB_PAGE_SIZE, AzurePageBlobStorage, MyAzurePageBlobStorage, PageBlobProperties,
+    },
     AzureStorageError,
 };
 use rust_extensions::AsSliceOrVec;
@@ -22,6 +25,33 @@ impl MyAzurePageBlobStorageWithRetries {
             page_blob,
             retries_amount,
             retry_delay,
+        }
+    }
+
+    pub async fn get_blob_properties_or_create_blob(
+        &self,
+        init_pages_amount: usize,
+    ) -> Result<PageBlobProperties, AzureStorageError> {
+        let mut attempt_no = 0;
+
+        loop {
+            match self
+                .page_blob
+                .get_blob_properties_or_create_blob(init_pages_amount)
+                .await
+            {
+                Ok(result) => {
+                    return Ok(result.into());
+                }
+                Err(err) => {
+                    if attempt_no >= self.retries_amount {
+                        return Err(err);
+                    }
+                    attempt_no += 1;
+
+                    tokio::time::sleep(self.retry_delay).await;
+                }
+            }
         }
     }
 }
