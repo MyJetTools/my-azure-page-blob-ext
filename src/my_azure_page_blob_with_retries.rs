@@ -1,10 +1,7 @@
 use std::time::Duration;
 
 use my_azure_storage_sdk::{
-    blob::BlobProperties,
-    page_blob::{
-        consts::BLOB_PAGE_SIZE, AzurePageBlobStorage, MyAzurePageBlobStorage, PageBlobProperties,
-    },
+    page_blob::{AzurePageBlobStorage, MyAzurePageBlobStorage, PageBlobProperties},
     AzureStorageError,
 };
 use rust_extensions::AsSliceOrVec;
