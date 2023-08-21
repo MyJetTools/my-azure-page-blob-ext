@@ -3,25 +3,19 @@ use my_azure_storage_sdk::{
     page_blob::{consts::BLOB_PAGE_SIZE, PageBlobProperties},
 };
 
-use crate::{pages_list::PagesCache, PagesCacheIntervals};
+use crate::{pages_cache_list::PagesCache, PagesCacheIntervals};
 
 pub struct PageBlobCachedData {
     pub page_blob_properties: Option<PageBlobProperties>,
-    pub cached_pages: Option<PagesCache>,
+    pub cached_pages: PagesCache,
     pub pages_to_write: PagesCacheIntervals,
 }
 
 impl PageBlobCachedData {
-    pub fn new(max_cached_pages_amount: usize, page_size: usize) -> Self {
-        let cached_pages = if max_cached_pages_amount == 0 {
-            None
-        } else {
-            Some(PagesCache::new(max_cached_pages_amount, page_size))
-        };
-
+    pub fn new() -> Self {
         Self {
             page_blob_properties: None,
-            cached_pages,
+            cached_pages: PagesCache::new(),
             pages_to_write: PagesCacheIntervals::new(),
         }
     }

@@ -1,5 +1,5 @@
 use my_azure_storage_sdk::{
-    page_blob::{consts::BLOB_PAGE_SIZE, MyAzurePageBlobStorage, PageBlobProperties},
+    page_blob::{MyAzurePageBlobStorage, PageBlobProperties},
     AzureStorageError,
 };
 use rust_extensions::AsSliceOrVec;
@@ -17,10 +17,10 @@ pub struct MyAzurePageBlobWithCache<
 impl<TMyAzurePageBlobStorage: MyAzurePageBlobStorage + Send + Sync + 'static>
     MyAzurePageBlobWithCache<TMyAzurePageBlobStorage>
 {
-    pub fn new(page_blob: TMyAzurePageBlobStorage, pages_to_cache: usize) -> Self {
+    pub fn new(page_blob: TMyAzurePageBlobStorage) -> Self {
         Self {
             page_blob,
-            cache: Mutex::new(PageBlobCachedData::new(pages_to_cache, BLOB_PAGE_SIZE)),
+            cache: Mutex::new(PageBlobCachedData::new()),
         }
     }
 }
@@ -64,8 +64,8 @@ impl<TMyAzurePageBlobStorage: MyAzurePageBlobStorage + Send + Sync + 'static> My
         for page_no in start_page_no..start_page_no + pages_amount {
             if let Some(page) = write_access.pages_to_write.get_page(page_no) {
                 found_pages.add(Some(page));
-            } else if let Some(page) = &write_access.cached_pages {
-                found_pages.add(page.get_payload(page_no));
+            } else if let Some(page) = write_access.cached_pages.get(page_no) {
+                found_pages.add(page.get_payload().into());
             } else {
                 found_pages.add(None);
             }
@@ -90,10 +90,16 @@ impl<TMyAzurePageBlobStorage: MyAzurePageBlobStorage + Send + Sync + 'static> My
         payload: impl Into<AsSliceOrVec<'s, u8>> + Send + Sync + 'static,
     ) -> Result<(), AzureStorageError> {
         let payload: AsSliceOrVec<'s, u8> = payload.into();
+        let payload = payload.into_vec();
         let mut write_access = self.cache.lock().await;
+
         write_access
             .pages_to_write
-            .update_pages(start_page_no, payload.into_vec());
+            .update_pages(start_page_no, payload.clone());
+
+        write_access
+            .cached_pages
+            .update_cache(start_page_no, payload.as_slice());
 
         Ok(())
     }
