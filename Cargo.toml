@@ -17,6 +17,6 @@ blob_with_cache = []
 my-azure-storage-sdk = { tag = "0.5.1", git = "https://github.com/MyJetTools/my-azure-storage.git" }
 my-telemetry = { tag = "1.2.1", git = "https://github.com/MyJetTools/my-telemetry.git" }
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
-tokio = { version = "*", features = ["full"] }
+tokio = { version = "*" }
 async-trait = "*"
 sha2 = "*"

@@ -4,7 +4,7 @@ use my_azure_storage_sdk::{
     page_blob::{AzurePageBlobStorage, MyAzurePageBlobStorage, PageBlobProperties},
     AzureStorageError,
 };
-use rust_extensions::AsSliceOrVec;
+use rust_extensions::SliceOrVec;
 
 pub struct MyAzurePageBlobStorageWithRetries {
     pub page_blob: AzurePageBlobStorage,
@@ -149,11 +149,11 @@ impl MyAzurePageBlobStorage for MyAzurePageBlobStorageWithRetries {
     async fn save_pages<'s>(
         &self,
         start_page_no: usize,
-        payload: impl Into<AsSliceOrVec<'s, u8>> + Send + Sync + 'static,
+        payload: impl Into<SliceOrVec<'s, u8>> + Send + Sync + 'static,
     ) -> Result<(), AzureStorageError> {
         let mut attempt_no = 0;
 
-        let payload: AsSliceOrVec<'s, u8> = payload.into();
+        let payload: SliceOrVec<'s, u8> = payload.into();
 
         let payload = payload.as_slice();
 
