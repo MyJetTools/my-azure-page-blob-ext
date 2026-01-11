@@ -46,9 +46,15 @@ impl<'s> FoundPages<'s> {
     }
 
     pub fn upload_missing_pages(&mut self, payload: &'s [u8]) {
+        let Some(download_start_page) = self.missing_intervals.first().map(|i| i.from_page_no)
+        else {
+            return;
+        };
+
         for missing_interval in &self.missing_intervals {
             for i in 0..missing_interval.amount {
-                let offset = i * BLOB_PAGE_SIZE;
+                let offset_pages = (missing_interval.from_page_no - download_start_page) + i;
+                let offset = offset_pages * BLOB_PAGE_SIZE;
 
                 self.pages[missing_interval.from_page_no - self.start_page_no + i] =
                     Some(&payload[offset..offset + BLOB_PAGE_SIZE]);
@@ -221,5 +227,47 @@ mod tests {
         expected_result.extend_from_slice([2u8; 512].as_slice());
 
         assert_eq!(expected_result.as_slice(), result.as_slice());
+    }
+
+    #[test]
+    fn upload_missing_pages_offsets_match_download_range() {
+        let mut found_pages = FoundPages::new(0, 6);
+
+        let page0 = vec![0u8; 512];
+        let page3 = vec![3u8; 512];
+
+        // pages: 0 (present), 1-2 (missing), 3 (present), 4-5 (missing)
+        found_pages.add(Some(&page0));
+        found_pages.add(None);
+        found_pages.add(None);
+        found_pages.add(Some(&page3));
+        found_pages.add(None);
+        found_pages.add(None);
+
+        let pages_to_upload = found_pages.get_pages_to_upload().unwrap();
+        assert_eq!(pages_to_upload.from_page_no, 1);
+        assert_eq!(pages_to_upload.amount, 5);
+
+        // Distinct payload per missing page to ensure offsets advance correctly
+        let mut payload = Vec::with_capacity(pages_to_upload.amount * BLOB_PAGE_SIZE);
+        payload.extend_from_slice([10u8; 512].as_slice()); // page 1
+        payload.extend_from_slice([11u8; 512].as_slice()); // page 2
+        payload.extend_from_slice([12u8; 512].as_slice()); // page 3 (unused, overwritten by present data)
+        payload.extend_from_slice([13u8; 512].as_slice()); // page 4
+        payload.extend_from_slice([14u8; 512].as_slice()); // page 5
+
+        found_pages.upload_missing_pages(payload.as_slice());
+
+        let result = found_pages.into_vec();
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice([0u8; 512].as_slice()); // page 0 present
+        expected.extend_from_slice([10u8; 512].as_slice()); // page 1 from payload
+        expected.extend_from_slice([11u8; 512].as_slice()); // page 2 from payload
+        expected.extend_from_slice([3u8; 512].as_slice()); // page 3 present overrides payload
+        expected.extend_from_slice([13u8; 512].as_slice()); // page 4 from payload
+        expected.extend_from_slice([14u8; 512].as_slice()); // page 5 from payload
+
+        assert_eq!(expected, result);
     }
 }

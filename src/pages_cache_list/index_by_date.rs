@@ -41,18 +41,9 @@ impl IndexByDate {
         None
     }
 
-    pub fn remove_earliest(&mut self) -> Option<Arc<CachedPage>> {
+    pub fn remove_earliest(&mut self) -> Option<Vec<Arc<CachedPage>>> {
         let microseconds = self.get_earliest_microseconds()?;
-
-        let result = self.data.remove(&microseconds);
-
-        if let Some(pages) = &result {
-            for page in pages {
-                self.data.remove(&page.page_id);
-            }
-        }
-
-        result
+        self.data.remove(&microseconds)
     }
 }
 
@@ -83,5 +74,32 @@ mod tests {
         let item = index.data.get(&5).unwrap();
 
         assert_eq!(item.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_earliest_returns_all_for_timestamp() {
+        let mut index = IndexByDate::new();
+
+        let page_a = Arc::new(CachedPage {
+            created: DateTimeAsMicroseconds::new(5),
+            page_id: 1,
+            payload: vec![],
+        });
+
+        let page_b = Arc::new(CachedPage {
+            created: DateTimeAsMicroseconds::new(5),
+            page_id: 2,
+            payload: vec![],
+        });
+
+        index.add(page_a.clone());
+        index.add(page_b.clone());
+
+        let removed = index.remove_earliest().unwrap();
+
+        assert_eq!(2, removed.len());
+        assert!(removed.iter().any(|p| p.page_id == page_a.page_id));
+        assert!(removed.iter().any(|p| p.page_id == page_b.page_id));
+        assert!(index.data.is_empty());
     }
 }

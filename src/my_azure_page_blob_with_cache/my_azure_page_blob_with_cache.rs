@@ -42,8 +42,8 @@ impl<TMyAzurePageBlobStorage: MyAzurePageBlobStorage + Send + Sync + 'static> My
     }
 
     async fn resize(&self, pages_amount: usize) -> Result<(), AzureStorageError> {
+        self.page_blob.resize(pages_amount).await?;
         let mut write_access = self.cache.lock().await;
-        self.resize(pages_amount).await?;
         write_access.update_pages_amount(pages_amount);
         Ok(())
     }

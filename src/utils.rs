@@ -3,6 +3,9 @@ pub fn get_pages_amount_by_size(data_size: usize, page_size: usize) -> usize {
 }
 
 pub fn calc_pages_amount_to_ressize(position: usize, page_size: usize, pages_rate: usize) -> usize {
+    if position == 0 {
+        return 0;
+    }
     let big_page_size = page_size * pages_rate;
     let big_pages_amount = crate::utils::get_pages_amount_by_size(position, big_page_size);
     big_pages_amount * pages_rate
@@ -57,5 +60,10 @@ mod tests {
         fill_content_to_comply_with_page_blob_size(&mut content, 32u8, BLOB_PAGE_SIZE);
 
         assert_eq!(BLOB_PAGE_SIZE, content.len());
+    }
+
+    #[test]
+    fn calc_pages_amount_to_ressize_handles_zero_position() {
+        assert_eq!(0, super::calc_pages_amount_to_ressize(0, BLOB_PAGE_SIZE, 4));
     }
 }
